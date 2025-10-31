@@ -1,14 +1,18 @@
-# 1) build
-FROM gradle:8.10-jdk17 AS build
-WORKDIR /home/gradle/src
+# =========================
+# 1ª etapa: build
+# =========================
+FROM gradle:8.10-jdk17-alpine AS build
+WORKDIR /app
 COPY . .
-# garante que o wrapper rode no Fly
-RUN chmod +x ./gradlew
-RUN ./gradlew bootJar --no-daemon
+RUN gradle clean bootJar --no-daemon
 
-# 2) runtime
+# =========================
+# 2ª etapa: runtime
+# =========================
 FROM eclipse-temurin:17-jre-alpine
 WORKDIR /app
-COPY --from=build /home/gradle/src/build/libs/*.jar app.jar
+COPY --from=build /app/build/libs/*.jar /app/app.jar
+
+# porta do Spring
 EXPOSE 8080
 ENTRYPOINT ["java","-jar","/app/app.jar"]
