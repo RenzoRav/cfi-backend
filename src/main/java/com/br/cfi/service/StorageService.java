@@ -27,6 +27,7 @@ import software.amazon.awssdk.services.s3.model.ObjectIdentifier;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.S3Object;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
+import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
 import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
 
 @Service
@@ -75,6 +76,21 @@ public class StorageService {
     return presigner.presignPutObject(preReq).url();
   }
 
+  // presign para GET (HQ)
+  public URL presignGet(String key, Duration ttl) {
+    GetObjectRequest getReq = GetObjectRequest.builder()
+        .bucket(props.bucket())
+        .key(key)
+        .build();
+
+    GetObjectPresignRequest preReq = GetObjectPresignRequest.builder()
+        .signatureDuration(ttl)
+        .getObjectRequest(getReq)
+        .build();
+
+    return presigner.presignGetObject(preReq).url();
+  }
+
   // lista por prefixo
   public List<S3Object> listPrefix(String prefix) {
     ListObjectsV2Response resp = s3.listObjectsV2(ListObjectsV2Request.builder()
@@ -99,7 +115,7 @@ public class StorageService {
         .build());
   }
 
-  // monta url pública
+  // monta url pública (CDN / domain público)
   public String publicUrl(String key) {
     if (props.publicBaseUrl() != null && !props.publicBaseUrl().isBlank()) {
       return props.publicBaseUrl().replaceAll("/+$", "") + "/" + key;
@@ -118,11 +134,27 @@ public class StorageService {
     s3.putObject(put, RequestBody.fromBytes(imageKey.getBytes(StandardCharsets.UTF_8)));
   }
 
-  // pega capa (ou primeira imagem)
+
   public String resolveCoverUrl(String imovelId, String tipo) {
+    CoverResult result = resolveCoverInternal(imovelId, tipo);
+    return result != null ? result.publicUrl() : null;
+  }
+
+
+  public CoverResult resolveCover(String imovelId, String tipo, Duration hqTtl) {
+    CoverResult base = resolveCoverInternal(imovelId, tipo);
+    if (base == null) return null;
+
+    URL hq = presignGet(base.key(), hqTtl != null ? hqTtl : Duration.ofHours(6));
+    return new CoverResult(base.key(), base.publicUrl(), hq.toString());
+  }
+
+  // implementação compartilhada
+  private CoverResult resolveCoverInternal(String imovelId, String tipo) {
     String prefix = "imoveis/%s/%s/".formatted(imovelId, tipo);
     String coverMarker = prefix + "_cover";
 
+    // 1) tenta ler o marcador
     try {
       String imageKey = new String(
           s3.getObject(GetObjectRequest.builder().bucket(props.bucket()).key(coverMarker).build(),
@@ -131,16 +163,25 @@ public class StorageService {
       ).trim();
 
       if (!imageKey.isBlank()) {
-        return publicUrl(imageKey);
+        return new CoverResult(imageKey, publicUrl(imageKey), null);
       }
     } catch (Exception ignore) {}
 
-    return listPrefix(prefix).stream()
+    // 2) fallback: pega o MAIOR arquivo do prefixo (melhor qualidade)
+    List<S3Object> all = listPrefix(prefix).stream()
         .filter(o -> !o.key().endsWith("/_cover"))
-        .sorted(Comparator.comparing(S3Object::lastModified))
-        .findFirst()
-        .map(o -> publicUrl(o.key()))
-        .orElse(null);
+        .toList();
+
+    if (all.isEmpty()) {
+      return null;
+    }
+
+    // maior por size
+    S3Object biggest = all.stream()
+        .max(Comparator.comparingLong(S3Object::size))
+        .orElse(all.get(0));
+
+    return new CoverResult(biggest.key(), publicUrl(biggest.key()), null);
   }
 
   // upload já como capa
@@ -206,12 +247,14 @@ public class StorageService {
       String prefix = "imoveis/%s/%s/".formatted(parsed.imovelId(), parsed.tipo());
       List<S3Object> remaining = listPrefix(prefix).stream()
           .filter(o -> !o.key().endsWith("/_cover"))
-          .sorted(Comparator.comparing(S3Object::lastModified))
           .toList();
 
       if (!remaining.isEmpty()) {
-        String newImageKey = remaining.get(0).key();
-        setCover(parsed.imovelId(), parsed.tipo(), newImageKey);
+        // escolhe o MAIOR agora
+        S3Object biggest = remaining.stream()
+            .max(Comparator.comparingLong(S3Object::size))
+            .orElse(remaining.get(0));
+        setCover(parsed.imovelId(), parsed.tipo(), biggest.key());
       } else {
         try {
           deleteObject(coverKey);
@@ -226,6 +269,8 @@ public class StorageService {
     if (!m.matches()) return null;
     return new ParsedKey(m.group(1), m.group(2), m.group(3));
   }
+
+  public record CoverResult(String key, String publicUrl, String hqUrl) {}
 
   private record ParsedKey(String imovelId, String tipo, String filename) {}
 }

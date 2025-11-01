@@ -49,7 +49,7 @@ public class StorageController {
   @PostMapping(path = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
   public Map<String, Object> uploadDireto(
       @RequestParam String imovelId,
-      @RequestParam String tipo, 
+      @RequestParam String tipo,
       @RequestPart("file") MultipartFile file
   ) throws IOException {
     String key = storage.buildKey(imovelId, tipo, file.getOriginalFilename());
@@ -107,24 +107,38 @@ public class StorageController {
   ) throws IOException {
     String key = storage.uploadCover(imovelId, tipo,
         file.getOriginalFilename(), file.getContentType(), file.getBytes());
+    // aqui já dá pra gerar o HQ também
+    var hq = storage.presignGet(key, Duration.ofHours(6));
     return Map.of(
         "imovelId", imovelId,
         "tipo", tipo,
         "coverKey", key,
-        "coverUrl", storage.publicUrl(key)
+        "coverUrl", storage.publicUrl(key),
+        "coverUrlHq", hq.toString()
     );
   }
 
+  // 🔥 AQUI é o ponto: passa a usar o resolveCover(...) que devolve HQ
   @GetMapping("/cover")
   public Map<String, Object> getCover(
       @RequestParam String imovelId,
       @RequestParam(defaultValue = "imagens") String tipo
   ) {
-    String url = storage.resolveCoverUrl(imovelId, tipo);
+    var cover = storage.resolveCover(imovelId, tipo, Duration.ofHours(6));
+    if (cover == null) {
+      return Map.of(
+          "imovelId", imovelId,
+          "tipo", tipo,
+          "coverUrl", "",
+          "coverUrlHq", ""
+      );
+    }
     return Map.of(
         "imovelId", imovelId,
         "tipo", tipo,
-        "coverUrl", url
+        "coverKey", cover.key(),
+        "coverUrl", cover.publicUrl(),
+        "coverUrlHq", cover.hqUrl()
     );
   }
 
