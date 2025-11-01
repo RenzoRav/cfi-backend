@@ -49,7 +49,7 @@ public class StorageController {
   @PostMapping(path = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
   public Map<String, Object> uploadDireto(
       @RequestParam String imovelId,
-      @RequestParam String tipo, // "imagens" | "plantas"
+      @RequestParam String tipo, 
       @RequestPart("file") MultipartFile file
   ) throws IOException {
     String key = storage.buildKey(imovelId, tipo, file.getOriginalFilename());
@@ -88,11 +88,17 @@ public class StorageController {
     return Map.of("deletedPrefix", prefix);
   }
 
-  /* =============================
-     CAPA via UPLOAD DE ARQUIVO
-     ============================= */
+  @DeleteMapping("/imovel")
+  public Map<String, Object> deleteAllFromImovel(
+      @RequestParam String imovelId
+  ) {
+    storage.deleteAllFromImovel(imovelId);
+    return Map.of(
+        "imovelId", imovelId,
+        "deleted", true
+    );
+  }
 
-  /** Sobe um arquivo e já define como capa no bucket. */
   @PostMapping(path = "/cover/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
   public Map<String, Object> uploadCover(
       @RequestParam String imovelId,
@@ -109,7 +115,6 @@ public class StorageController {
     );
   }
 
-  /** Retorna a URL pública da capa (marcador _cover; fallback para primeira imagem). */
   @GetMapping("/cover")
   public Map<String, Object> getCover(
       @RequestParam String imovelId,
@@ -120,6 +125,40 @@ public class StorageController {
         "imovelId", imovelId,
         "tipo", tipo,
         "coverUrl", url
+    );
+  }
+
+  @PostMapping("/cover/by-key")
+  public Map<String, Object> setCoverByKey(
+      @RequestParam String key
+  ) {
+    storage.setCoverByImageKey(key);
+    return Map.of(
+        "key", key,
+        "coverSet", true
+    );
+  }
+
+  @DeleteMapping("/object")
+  public Map<String, Object> deleteObject(
+      @RequestParam String key
+  ) {
+    storage.deleteObject(key);
+    return Map.of(
+        "key", key,
+        "deleted", true
+    );
+  }
+
+  @DeleteMapping("/image")
+  public Map<String, Object> deleteImage(
+      @RequestParam String key
+  ) {
+    storage.deleteImageByKey(key);
+    return Map.of(
+        "key", key,
+        "deleted", true,
+        "coverRecalculated", true
     );
   }
 }

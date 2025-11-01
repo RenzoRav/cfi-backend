@@ -1,4 +1,3 @@
-// src/main/java/com/br/cfi/service/StorageService.java
 package com.br.cfi.service;
 
 import java.net.URL;
@@ -7,6 +6,8 @@ import java.time.Duration;
 import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
@@ -17,9 +18,9 @@ import com.br.cfi.config.R2Props;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.Delete;
+import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.DeleteObjectsRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
-import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
 import software.amazon.awssdk.services.s3.model.ObjectIdentifier;
@@ -35,7 +36,10 @@ public class StorageService {
   @Autowired private S3Presigner presigner;
   @Autowired private R2Props props;
 
-  /** Gera a key no formato: imoveis/{imovelId}/{tipo}/uuid.ext */
+  private static final Pattern KEY_PATTERN =
+      Pattern.compile("^imoveis/([^/]+)/([^/]+)/(.+)$");
+
+  // key: imoveis/{imovelId}/{tipo}/uuid.ext
   public String buildKey(String imovelId, String tipoPasta, String originalFilename) {
     String ext = "";
     if (originalFilename != null && originalFilename.lastIndexOf('.') >= 0) {
@@ -44,7 +48,7 @@ public class StorageService {
     return "imoveis/%s/%s/%s%s".formatted(imovelId, tipoPasta, UUID.randomUUID(), ext);
   }
 
-  /** Upload pelo backend (bytes no servidor) */
+  // upload via backend
   public String upload(String key, String contentType, byte[] bytes) {
     PutObjectRequest put = PutObjectRequest.builder()
         .bucket(props.bucket())
@@ -55,7 +59,7 @@ public class StorageService {
     return publicUrl(key);
   }
 
-  /** Presigned PUT para upload direto do front */
+  // presign para upload direto
   public URL presignPut(String key, String contentType, Duration ttl) {
     PutObjectRequest req = PutObjectRequest.builder()
         .bucket(props.bucket())
@@ -71,7 +75,7 @@ public class StorageService {
     return presigner.presignPutObject(preReq).url();
   }
 
-  /** Lista “pasta”: todos os objetos com prefixo */
+  // lista por prefixo
   public List<S3Object> listPrefix(String prefix) {
     ListObjectsV2Response resp = s3.listObjectsV2(ListObjectsV2Request.builder()
         .bucket(props.bucket())
@@ -80,7 +84,7 @@ public class StorageService {
     return resp.contents();
   }
 
-  /** Apaga todos os objetos sob um prefixo */
+  // apaga tudo de um prefixo
   public void deletePrefix(String prefix) {
     List<S3Object> objects = listPrefix(prefix);
     if (objects.isEmpty()) return;
@@ -95,7 +99,7 @@ public class StorageService {
         .build());
   }
 
-  /** Monta URL pública para acesso */
+  // monta url pública
   public String publicUrl(String key) {
     if (props.publicBaseUrl() != null && !props.publicBaseUrl().isBlank()) {
       return props.publicBaseUrl().replaceAll("/+$", "") + "/" + key;
@@ -103,11 +107,7 @@ public class StorageService {
     return props.endpoint().replaceAll("/+$", "") + "/" + props.bucket() + "/" + key;
   }
 
-  /* =========================
-     CAPA NO BUCKET (marcador)
-     ========================= */
-
-  /** Grava (ou atualiza) o marcador de capa no objeto imoveis/{id}/{tipo}/_cover contendo a key da imagem. */
+  // grava marcador de capa
   public void setCover(String imovelId, String tipo, String imageKey) {
     String coverKey = "imoveis/%s/%s/_cover".formatted(imovelId, tipo);
     PutObjectRequest put = PutObjectRequest.builder()
@@ -118,17 +118,12 @@ public class StorageService {
     s3.putObject(put, RequestBody.fromBytes(imageKey.getBytes(StandardCharsets.UTF_8)));
   }
 
-  /** Lê o marcador _cover e retorna a URL pública da capa; se não existir, usa a primeira imagem do prefixo. */
+  // pega capa (ou primeira imagem)
   public String resolveCoverUrl(String imovelId, String tipo) {
     String prefix = "imoveis/%s/%s/".formatted(imovelId, tipo);
     String coverMarker = prefix + "_cover";
 
     try {
-      GetObjectResponse head =
-          s3.getObject(GetObjectRequest.builder().bucket(props.bucket()).key(coverMarker).build(),
-              software.amazon.awssdk.core.sync.ResponseTransformer.toBytes()).response();
-
-      // Lê o conteúdo (key da imagem) do marcador:
       String imageKey = new String(
           s3.getObject(GetObjectRequest.builder().bucket(props.bucket()).key(coverMarker).build(),
               software.amazon.awssdk.core.sync.ResponseTransformer.toBytes()
@@ -138,11 +133,8 @@ public class StorageService {
       if (!imageKey.isBlank()) {
         return publicUrl(imageKey);
       }
-    } catch (Exception ignore) {
-      // Se não existir o _cover, caímos no fallback.
-    }
+    } catch (Exception ignore) {}
 
-    // Fallback: primeira imagem (ignora o _cover)
     return listPrefix(prefix).stream()
         .filter(o -> !o.key().endsWith("/_cover"))
         .sorted(Comparator.comparing(S3Object::lastModified))
@@ -151,11 +143,89 @@ public class StorageService {
         .orElse(null);
   }
 
-  /** Faz upload do arquivo e já define como capa. Retorna a key da imagem. */
+  // upload já como capa
   public String uploadCover(String imovelId, String tipo, String originalFilename, String contentType, byte[] bytes) {
     String key = buildKey(imovelId, tipo, originalFilename);
     upload(key, contentType, bytes);
     setCover(imovelId, tipo, key);
     return key;
   }
+
+  // apaga tudo de um imóvel
+  public void deleteAllFromImovel(String imovelId) {
+    String prefix = "imoveis/%s".formatted(imovelId);
+    deletePrefix(prefix);
+  }
+
+  // apaga um objeto
+  public void deleteObject(String key) {
+    s3.deleteObject(DeleteObjectRequest.builder()
+        .bucket(props.bucket())
+        .key(key)
+        .build());
+  }
+
+  // seta capa usando só a key
+  public void setCoverByImageKey(String imageKey) {
+    ParsedKey parsed = parseKey(imageKey);
+    if (parsed == null) {
+      throw new IllegalArgumentException("Key inválida para capa: " + imageKey);
+    }
+    setCover(parsed.imovelId(), parsed.tipo(), imageKey);
+  }
+
+  // apaga imagem; se era capa, recalcula
+  public void deleteImageByKey(String imageKey) {
+    ParsedKey parsed = parseKey(imageKey);
+    if (parsed == null) {
+      deleteObject(imageKey);
+      return;
+    }
+
+    String coverKey = "imoveis/%s/%s/_cover".formatted(parsed.imovelId(), parsed.tipo());
+    boolean isCover = false;
+
+    try {
+      String currentCoverImageKey = new String(
+          s3.getObject(GetObjectRequest.builder()
+              .bucket(props.bucket())
+              .key(coverKey)
+              .build(),
+              software.amazon.awssdk.core.sync.ResponseTransformer.toBytes()
+          ).asByteArray(), StandardCharsets.UTF_8
+      ).trim();
+
+      if (imageKey.equals(currentCoverImageKey)) {
+        isCover = true;
+      }
+    } catch (Exception ignore) {}
+
+    deleteObject(imageKey);
+
+    if (isCover) {
+      String prefix = "imoveis/%s/%s/".formatted(parsed.imovelId(), parsed.tipo());
+      List<S3Object> remaining = listPrefix(prefix).stream()
+          .filter(o -> !o.key().endsWith("/_cover"))
+          .sorted(Comparator.comparing(S3Object::lastModified))
+          .toList();
+
+      if (!remaining.isEmpty()) {
+        String newImageKey = remaining.get(0).key();
+        setCover(parsed.imovelId(), parsed.tipo(), newImageKey);
+      } else {
+        try {
+          deleteObject(coverKey);
+        } catch (Exception ignore) {}
+      }
+    }
+  }
+
+  // helpers
+  private ParsedKey parseKey(String key) {
+    Matcher m = KEY_PATTERN.matcher(key);
+    if (!m.matches()) return null;
+    return new ParsedKey(m.group(1), m.group(2), m.group(3));
+  }
+
+  private record ParsedKey(String imovelId, String tipo, String filename) {}
 }
