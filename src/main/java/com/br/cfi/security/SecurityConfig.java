@@ -39,16 +39,14 @@ public class SecurityConfig {
             .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                .requestMatchers("/auth/**", "/api/auth/**").permitAll()
                 .requestMatchers(
-        "/auth/**",
-        "/api/auth/**",
-        "/api/storage/**",   // 👈 libera storage
-        "/error",
-        "/v3/api-docs/**",
-        "/swagger-ui/**",
-        "/swagger-ui.html"
-                        
+                    "/auth/**",
+                    "/api/auth/**",
+                    "/api/storage/**",
+                    "/error",
+                    "/v3/api-docs/**",
+                    "/swagger-ui/**",
+                    "/swagger-ui.html"
                 ).permitAll()
                 .anyRequest().permitAll()
             )
@@ -62,24 +60,17 @@ public class SecurityConfig {
 
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
-        CorsConfiguration configuration = new CorsConfiguration();
-        // 👉 coloque cada origin separado
-        configuration.setAllowedOrigins(List.of(
-                "http://localhost:3000",
-                "http://localhost:3001",
-                "http://localhost:3002",
-                "http://localhost:4000",
-                "http://0.0.0.0:3001"
-        ));
-        configuration.setAllowedMethods(List.of("GET","POST","PUT","DELETE","OPTIONS","PATCH"));
-        configuration.setAllowedHeaders(List.of("Authorization","Content-Type","Accept","Origin","X-Requested-With"));
-        configuration.setExposedHeaders(List.of("Authorization"));
-        // se for usar cookie mesmo: configuration.setAllowCredentials(true);
-        configuration.setAllowCredentials(false); // você está usando Bearer no front
-        configuration.setMaxAge(Duration.ofHours(1));
+        CorsConfiguration cfg = new CorsConfiguration();
+        // 👇 aqui é a diferença: aceita qualquer origem (útil pra fly / supabase)
+        cfg.setAllowedOriginPatterns(List.of("*"));
+        cfg.setAllowedMethods(List.of("GET","POST","PUT","DELETE","OPTIONS","PATCH"));
+        cfg.setAllowedHeaders(List.of("Authorization","Content-Type","Accept","Origin","X-Requested-With"));
+        cfg.setExposedHeaders(List.of("Authorization"));
+        cfg.setAllowCredentials(false);
+        cfg.setMaxAge(Duration.ofHours(1));
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
-        source.registerCorsConfiguration("/**", configuration);
+        source.registerCorsConfiguration("/**", cfg);
         return source;
     }
 
