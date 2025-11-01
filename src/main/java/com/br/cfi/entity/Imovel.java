@@ -27,7 +27,7 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 @Builder
 @Entity
-@Table(name = "imovel", schema = "app")
+@Table(name = "imovel")
 public class Imovel {
 
   @Id

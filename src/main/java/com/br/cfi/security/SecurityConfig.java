@@ -50,7 +50,7 @@ public class SecurityConfig {
         "/swagger-ui.html"
                         
                 ).permitAll()
-                .anyRequest().authenticated()
+                .anyRequest().permitAll()
             )
             .exceptionHandling(e -> e.authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
             .formLogin(AbstractHttpConfigurer::disable)
